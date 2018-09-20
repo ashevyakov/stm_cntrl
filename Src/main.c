@@ -89,6 +89,7 @@ void setPWM(int l, int r) {
 	int32_t data1 = l * pwm_mp;
 	int32_t data2 = r * pwm_mp;
 
+	// Установка направления в зависимости от знака значения
 	uint8_t dir1 = (data1 < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
 	uint8_t dir2 = (data2 < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
 
@@ -98,9 +99,11 @@ void setPWM(int l, int r) {
 	data1 = (data1 > 65530) ? 65530 : data1;
 	data2 = (data2 > 65530) ? 65530 : data2;
 
+	// Установка скважности ШИМ - 0-65535
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, data1);
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, data2);
 
+	// Доставка сведений об установке частоты в консольку
 	sprintf(rxbuffer, "set val: %5ld, %5ld dir: %d, %d\n", data1, data2, dir1,
 			dir2);
 	CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
@@ -143,15 +146,22 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
+  // Запуск таймеров
 	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
 	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
 	HAL_TIM_Base_Start(&htim1);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 1024);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 2048);
+
+	// Установка первоначальных значений ШИМ, чтоб никуда не уехало заранее.
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
+
+	// Буффер приема по CDC, который висит на прерываниях USB
 	extern char UserRxBufferFS[1024];
 
+	// значения энкодеров
+	// TODO: set unsigned int
 	int32_t capture = 0, capture1 = 0;
 
   /* USER CODE END 2 */
@@ -163,6 +173,7 @@ int main(void)
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
+		// Считываем состояния счетчиков, выводим содержимое
 		capture = TIM4->CNT;
 		capture1 = TIM3->CNT;
 		sprintf(rxbuffer, "encoder: %5ld, %5ld\n", capture, capture1);
@@ -172,6 +183,8 @@ int main(void)
 		int data2 = 0;
 
 		uint16_t counter = (uint16_t) strlen((char *) UserRxBufferFS);
+		// если в буфере есть новые данные, то парсим их по формату <a,b>
+
 		if (counter) {
 			strncpy(txbuffer, (char *) UserRxBufferFS, counter);
 			memset(UserRxBufferFS, 0, counter);
@@ -179,12 +192,6 @@ int main(void)
 			char * st = strstr(txbuffer, "<");
 			char * en = strstr(txbuffer, ">");
 			char * mid = strstr(txbuffer, ",");
-
-//			char * pch;
-//			pch = strtok(txbuffer, " ,");
-//			if (pch != NULL) {
-//				data1 = atoi(pch);
-//				data2 = atoi(strtok(NULL, " ,"));
 
 			char tmp[16];
 			char tmp2[16];
@@ -197,10 +204,14 @@ int main(void)
 			data1 = atoi(tmp);
 			data2 = atoi(tmp2);
 
+			// получаем новые значения скоростей, выводим подтверждение получения.
+
 			sprintf(rxbuffer, "get: %5d, %5d\n", data1, data2);
 
 			CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
 
+			// устанавливаем ШИМ на нужную скорость
+			// TODO: ПИД регулятор должен вызываться по прерыванию, задача шим должна быть в нем
 			setPWM(data1, data2);
 
 			memset(txbuffer, 0, counter);
