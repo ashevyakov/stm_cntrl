@@ -48,9 +48,9 @@
   */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stm32f1xx_hal.h"
 #include "usb_device.h"
-
+#include "stm32f1xx_hal.h"
+#include "pid/pid_controller.h"
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
@@ -63,9 +63,20 @@ TIM_HandleTypeDef htim4;
 
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
+PIDControl pidl;
+PIDControl pidr;
+#define kP 1
+#define kI 0
+#define kD 0
+#define SAMPLE_TIME 1.0/10
 uint16_t pwm_mp = 650;
 char txbuffer[256];
 char rxbuffer[256];
+float spl, spr = 0;
+float encl, encr;
+PIDData data;
+int data1 = 0;
+		int data2 = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -74,8 +85,7 @@ static void MX_GPIO_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_TIM1_Init(void);
-                                    
+static void MX_TIM1_Init(void);                                    
 void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
                                 
 
@@ -86,28 +96,33 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 
 /* USER CODE BEGIN 0 */
 void setPWM(int l, int r) {
-	int32_t data1 = l * pwm_mp;
-	int32_t data2 = r * pwm_mp;
+	int32_t data11 = l * pwm_mp;
+	int32_t data21 = r * pwm_mp;
 
-	// Установка направления в зависимости от знака значения
-	uint8_t dir1 = (data1 < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
-	uint8_t dir2 = (data2 < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+	// У�?тановка направлени�? в зави�?имо�?ти от знака значени�?
+	uint8_t dir1 = (data11 < 0) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+	uint8_t dir2 = (data21 < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2, dir1);
+	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, dir2);
+	data11 = abs(data11);
+	data21 = abs(data21);
 
-	data1 = abs(data1);
-	data2 = abs(data2);
+	data11 = (data1 > 65530) ? 65530 : data11;
+	data21 = (data2 > 65530) ? 65530 : data21;
 
-	data1 = (data1 > 65530) ? 65530 : data1;
-	data2 = (data2 > 65530) ? 65530 : data2;
+	// У�?тановка �?кважно�?ти ШИМ - 0-65535
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, data11);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, data21);
 
-	// Установка скважности ШИМ - 0-65535
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, data1);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, data2);
 
-	// Доставка сведений об установке частоты в консольку
-	sprintf(rxbuffer, "set val: %5ld, %5ld dir: %d, %d\n", data1, data2, dir1,
-			dir2);
+
+
+	// До�?тавка �?ведений об у�?тановке ча�?тоты в кон�?ольку
+	sprintf(rxbuffer, "set val: %5ld, %5ld dir: %d, %d - %d %d enc delta: %d %d\n", data11, data21, dir1,
+		dir2, data1, data2, data.encl, data.encr);
 	CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
 }
+
 
 /* USER CODE END 0 */
 
@@ -146,24 +161,25 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
-  // Запуск таймеров
+  // Запу�?к таймеров
 	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
 	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
-	HAL_TIM_Base_Start(&htim1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+	HAL_TIM_Base_Start_IT(&htim2);
 
-	// Установка первоначальных значений ШИМ, чтоб никуда не уехало заранее.
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);
-
-	// Буффер приема по CDC, который висит на прерываниях USB
+	// У�?тановка первоначальных значений ШИМ, чтоб никуда не уехало заранее.
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+	PIDInit(&pidl, kP, kI, kD, SAMPLE_TIME, -100, 100, AUTOMATIC, DIRECT);
+	PIDInit(&pidr, kP, kI, kD, SAMPLE_TIME, -100, 100, AUTOMATIC, DIRECT);
+	// Буффер приема по CDC, который ви�?ит на прерывани�?х USB
 	extern char UserRxBufferFS[1024];
 
-	// значения энкодеров
+	// значени�? �?нкодеров
 	// TODO: set unsigned int
 	int32_t capture = 0, capture1 = 0;
-
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -173,17 +189,17 @@ int main(void)
   /* USER CODE END WHILE */
 
   /* USER CODE BEGIN 3 */
-		// Считываем состояния счетчиков, выводим содержимое
+		// Считываем �?о�?то�?ни�? �?четчиков, выводим �?одержимое
 		capture = TIM4->CNT;
 		capture1 = TIM3->CNT;
-		sprintf(rxbuffer, "encoder: %5ld, %5ld\n", capture, capture1);
-		CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
+		// sprintf(rxbuffer, "encoder: %5ld, %5ld\n", capture, capture1);
+		// CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
+		data.encl = capture;
+		data.encr = capture1;
 
-		int data1 = 0;
-		int data2 = 0;
 
 		uint16_t counter = (uint16_t) strlen((char *) UserRxBufferFS);
-		// если в буфере есть новые данные, то парсим их по формату <a,b>
+		// е�?ли в буфере е�?ть новые данные, то пар�?им их по формату <a,b>
 
 		if (counter) {
 			strncpy(txbuffer, (char *) UserRxBufferFS, counter);
@@ -203,16 +219,17 @@ int main(void)
 
 			data1 = atoi(tmp);
 			data2 = atoi(tmp2);
+			data.spdl = data1;
+			data.spdr = data2;
+			//setPWM(data1, data2);
+			// получаем новые значени�? �?коро�?тей, выводим подтверждение получени�?.
 
-			// получаем новые значения скоростей, выводим подтверждение получения.
+			//sprintf(rxbuffer, "get: %5d, %5d\n", data1, data2);
 
-			sprintf(rxbuffer, "get: %5d, %5d\n", data1, data2);
+			// CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
 
-			CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
-
-			// устанавливаем ШИМ на нужную скорость
-			// TODO: ПИД регулятор должен вызываться по прерыванию, задача шим должна быть в нем
-			setPWM(data1, data2);
+			// у�?танавливаем ШИМ на нужную �?коро�?ть
+			// TODO: ПИД регул�?тор должен вызывать�?�? по прерыванию, задача шим должна быть в нем
 
 			memset(txbuffer, 0, counter);
 		}
@@ -287,9 +304,11 @@ static void MX_TIM1_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig;
   TIM_MasterConfigTypeDef sMasterConfig;
+  TIM_OC_InitTypeDef sConfigOC;
+  TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig;
 
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 3;
+  htim1.Init.Prescaler = 1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim1.Init.Period = 65535;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -306,12 +325,48 @@ static void MX_TIM1_Init(void)
     _Error_Handler(__FILE__, __LINE__);
   }
 
+  if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
+
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 8191;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
+  sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  sBreakDeadTimeConfig.OffStateRunMode = TIM_OSSR_DISABLE;
+  sBreakDeadTimeConfig.OffStateIDLEMode = TIM_OSSI_DISABLE;
+  sBreakDeadTimeConfig.LockLevel = TIM_LOCKLEVEL_OFF;
+  sBreakDeadTimeConfig.DeadTime = 0;
+  sBreakDeadTimeConfig.BreakState = TIM_BREAK_DISABLE;
+  sBreakDeadTimeConfig.BreakPolarity = TIM_BREAKPOLARITY_HIGH;
+  sBreakDeadTimeConfig.AutomaticOutput = TIM_AUTOMATICOUTPUT_DISABLE;
+  if (HAL_TIMEx_ConfigBreakDeadTime(&htim1, &sBreakDeadTimeConfig) != HAL_OK)
+  {
+    _Error_Handler(__FILE__, __LINE__);
+  }
+
+  HAL_TIM_MspPostInit(&htim1);
 
 }
 
@@ -321,12 +376,11 @@ static void MX_TIM2_Init(void)
 
   TIM_ClockConfigTypeDef sClockSourceConfig;
   TIM_MasterConfigTypeDef sMasterConfig;
-  TIM_OC_InitTypeDef sConfigOC;
 
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 1;
+  htim2.Init.Prescaler = 35999;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 65535;
+  htim2.Init.Period = 199;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -340,33 +394,12 @@ static void MX_TIM2_Init(void)
     _Error_Handler(__FILE__, __LINE__);
   }
 
-  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
-  {
-    _Error_Handler(__FILE__, __LINE__);
-  }
-
   sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
   {
     _Error_Handler(__FILE__, __LINE__);
   }
-
-  sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 8191;
-  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    _Error_Handler(__FILE__, __LINE__);
-  }
-
-  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
-  {
-    _Error_Handler(__FILE__, __LINE__);
-  }
-
-  HAL_TIM_MspPostInit(&htim2);
 
 }
 
@@ -466,6 +499,9 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2|GPIO_PIN_3, GPIO_PIN_RESET);
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
@@ -479,6 +515,13 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
 

@@ -54,6 +54,19 @@
 /* Includes ------------------------------------------------------------------*/
 
 /* USER CODE BEGIN Includes */
+#include "stm32f1xx.h"
+#include "stm32f1xx_hal.h"
+
+typedef struct {
+	uint16_t encl;
+	uint16_t encr;
+	uint16_t encl_old;
+	uint16_t encr_old;
+	int32_t spdl;
+	int32_t spdr;
+}
+PIDData;
+
 
 /* USER CODE END Includes */
 
@@ -67,6 +80,7 @@
 /* #define USE_FULL_ASSERT    1U */
 
 /* USER CODE BEGIN Private defines */
+
 
 /* USER CODE END Private defines */
 

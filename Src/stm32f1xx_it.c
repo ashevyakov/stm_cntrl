@@ -34,14 +34,18 @@
 #include "stm32f1xx_hal.h"
 #include "stm32f1xx.h"
 #include "stm32f1xx_it.h"
+#include "pid/pid_controller.h"
 
 /* USER CODE BEGIN 0 */
+extern PIDControl pidl;
+extern PIDControl pidr;
+extern PIDData data;
 
+int res = 0;
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
 extern PCD_HandleTypeDef hpcd_USB_FS;
-extern TIM_HandleTypeDef htim1;
 extern TIM_HandleTypeDef htim2;
 
 /******************************************************************************/
@@ -209,29 +213,32 @@ void USB_LP_CAN1_RX0_IRQHandler(void)
 }
 
 /**
-* @brief This function handles TIM1 update interrupt.
-*/
-void TIM1_UP_IRQHandler(void)
-{
-  /* USER CODE BEGIN TIM1_UP_IRQn 0 */
-
-  /* USER CODE END TIM1_UP_IRQn 0 */
-  HAL_TIM_IRQHandler(&htim1);
-  /* USER CODE BEGIN TIM1_UP_IRQn 1 */
-
-  /* USER CODE END TIM1_UP_IRQn 1 */
-}
-
-/**
 * @brief This function handles TIM2 global interrupt.
 */
 void TIM2_IRQHandler(void)
 {
   /* USER CODE BEGIN TIM2_IRQn 0 */
-
   /* USER CODE END TIM2_IRQn 0 */
   HAL_TIM_IRQHandler(&htim2);
   /* USER CODE BEGIN TIM2_IRQn 1 */
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);
+  PIDSetpointSet(&pidl, data.spdl);
+  PIDInputSet(&pidl, data.encl - data.encl_old);
+  data.encl_old = data.encl;
+  PIDCompute(&pidl);
+  res = (int)round(PIDOutputGet(&pidl));
+
+  PIDSetpointSet(&pidr, data.spdr);
+    PIDInputSet(&pidr, data.encr - data.encr_old);
+    data.encr_old = data.encr;
+    PIDCompute(&pidr);
+   int res1 = (int)round(PIDOutputGet(&pidr));
+
+  setPWM(res, res1);
+
+  // setPWM(res, res);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
+
 
   /* USER CODE END TIM2_IRQn 1 */
 }
