@@ -65,11 +65,11 @@ TIM_HandleTypeDef htim4;
 /* Private variables ---------------------------------------------------------*/
 PIDControl pidl;
 PIDControl pidr;
-#define kP 1
+#define kP 2
 #define kI 0
 #define kD 0
-#define SAMPLE_TIME 1.0/10
-uint16_t pwm_mp = 650;
+#define SAMPLE_TIME 1.0/10.0
+uint16_t pwm_mp = 500;
 char txbuffer[256];
 char rxbuffer[256];
 float spl, spr = 0;
@@ -96,29 +96,29 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 
 /* USER CODE BEGIN 0 */
 void setPWM(int l, int r) {
-	int32_t data11 = l * pwm_mp;
-	int32_t data21 = r * pwm_mp;
+	int32_t d_left = l * pwm_mp;
+	int32_t d_right = r * pwm_mp;
 
 	// У�?тановка направлени�? в зави�?имо�?ти от знака значени�?
-	uint8_t dir1 = (data11 < 0) ? GPIO_PIN_RESET : GPIO_PIN_SET;
-	uint8_t dir2 = (data21 < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+	uint8_t dir1 = (d_left < 0) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+	uint8_t dir2 = (d_right < 0) ? GPIO_PIN_SET : GPIO_PIN_RESET;
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_2, dir1);
 	  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_3, dir2);
-	data11 = abs(data11);
-	data21 = abs(data21);
+	d_left = abs(d_left);
+	d_right = abs(d_right);
 
-	data11 = (data1 > 65530) ? 65530 : data11;
-	data21 = (data2 > 65530) ? 65530 : data21;
+	d_left = (data1 > 65530) ? 65530 : d_left;
+	d_right = (data2 > 65530) ? 65530 : d_right;
 
 	// У�?тановка �?кважно�?ти ШИМ - 0-65535
-	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, data11);
-	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, data21);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, d_left);
+	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, d_right);
 
 
 
 
 	// До�?тавка �?ведений об у�?тановке ча�?тоты в кон�?ольку
-	sprintf(rxbuffer, "set val: %5ld, %5ld dir: %d, %d - %d %d enc delta: %d %d\n", data11, data21, dir1,
+	sprintf(rxbuffer, "set val: %5ld, %5ld dir: %d, %d - %d %d enc delta: %d %d\n", d_left, d_right, dir1,
 		dir2, data1, data2, data.encl, data.encr);
 	CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
 }
@@ -178,7 +178,7 @@ int main(void)
 
 	// значени�? �?нкодеров
 	// TODO: set unsigned int
-	int32_t capture = 0, capture1 = 0;
+	int32_t cap_left = 0, cap_right = 0;
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
   /* USER CODE END 2 */
 
@@ -190,12 +190,12 @@ int main(void)
 
   /* USER CODE BEGIN 3 */
 		// Считываем �?о�?то�?ни�? �?четчиков, выводим �?одержимое
-		capture = TIM4->CNT;
-		capture1 = TIM3->CNT;
+		cap_left = TIM4->CNT;
+		cap_right = TIM3->CNT;
 		// sprintf(rxbuffer, "encoder: %5ld, %5ld\n", capture, capture1);
 		// CDC_Transmit_FS((uint8_t *) rxbuffer, strlen(rxbuffer));
-		data.encl = capture;
-		data.encr = capture1;
+		data.encl = cap_left;
+		data.encr = cap_right;
 
 
 		uint16_t counter = (uint16_t) strlen((char *) UserRxBufferFS);
@@ -209,16 +209,16 @@ int main(void)
 			char * en = strstr(txbuffer, ">");
 			char * mid = strstr(txbuffer, ",");
 
-			char tmp[16];
-			char tmp2[16];
+			char tmp_left[16];
+			char tmp_right[16];
 
-			strncpy(tmp, st+1, mid - st - 1);
-			tmp[mid - st - 1] = '\0';
-			strncpy(tmp2, mid+1, en - mid -1);
-			tmp2[en - mid -1] = '\0';
+			strncpy(tmp_left, st+1, mid - st - 1);
+			tmp_left[mid - st - 1] = '\0';
+			strncpy(tmp_right, mid+1, en - mid -1);
+			tmp_right[en - mid -1] = '\0';
 
-			data1 = atoi(tmp);
-			data2 = atoi(tmp2);
+			data1 = atoi(tmp_left);
+			data2 = atoi(tmp_right);
 			data.spdl = data1;
 			data.spdr = data2;
 			//setPWM(data1, data2);

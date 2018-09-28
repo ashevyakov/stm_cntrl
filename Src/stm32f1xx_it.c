@@ -41,7 +41,7 @@ extern PIDControl pidl;
 extern PIDControl pidr;
 extern PIDData data;
 
-int res = 0;
+int res_left = 0;
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -226,15 +226,15 @@ void TIM2_IRQHandler(void)
   PIDInputSet(&pidl, data.encl - data.encl_old);
   data.encl_old = data.encl;
   PIDCompute(&pidl);
-  res = (int)round(PIDOutputGet(&pidl));
+  res_left = (int)round(PIDOutputGet(&pidl));
 
   PIDSetpointSet(&pidr, data.spdr);
     PIDInputSet(&pidr, data.encr - data.encr_old);
     data.encr_old = data.encr;
     PIDCompute(&pidr);
-   int res1 = (int)round(PIDOutputGet(&pidr));
+   int res_right = (int)round(PIDOutputGet(&pidr));
 
-  setPWM(res, res1);
+  setPWM(res_left, res_right);
 
   // setPWM(res, res);
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);
